@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import './App.css'
 
-const API_BASE_URL = 'http://localhost:3000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 
 function App() {
   // State
@@ -10,6 +10,7 @@ function App() {
   const [backendStatus, setBackendStatus] = useState({ connected: false, message: 'Checking...' })
   const [registerStatus, setRegisterStatus] = useState({ type: '', message: '' })
   const [userName, setUserName] = useState('')
+  const [userId, setUserId] = useState('')
   const [result, setResult] = useState({ name: 'No face detected', confidence: 0 })
 
   // Refs
@@ -21,10 +22,13 @@ function App() {
   // Check backend status
   const checkBackendStatus = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/`)
+      const response = await fetch(`${API_BASE_URL}/health`)
       const data = await response.json()
-      setBackendStatus({ connected: true, message: data.message })
-      return true
+      if (data.status === 'healthy') {
+        setBackendStatus({ connected: true, message: 'Online' })
+        return true
+      }
+      throw new Error('Backend unhealthy')
     } catch (error) {
       setBackendStatus({ connected: false, message: 'Backend Offline' })
       return false
@@ -49,12 +53,6 @@ function App() {
         await videoRef.current.play()
         streamRef.current = stream
         setIsCameraOn(true)
-
-        // Set canvas size
-        if (canvasRef.current) {
-          canvasRef.current.width = 640
-          canvasRef.current.height = 480
-        }
       }
     } catch (error) {
       console.error('Camera error:', error)
@@ -89,7 +87,7 @@ function App() {
     }
   }
 
-  // Capture frame
+  // Capture CENTER CROP frame
   const captureFrame = () => {
     return new Promise((resolve) => {
       if (!videoRef.current || !canvasRef.current) {
@@ -97,28 +95,37 @@ function App() {
         return
       }
 
+      const video = videoRef.current
       const canvas = canvasRef.current
       const ctx = canvas.getContext('2d')
+      
+      // Define crop dimensions (square crop from center)
+      const cropSize = 300 // Size of the face box
+      const startX = (video.videoWidth - cropSize) / 2
+      const startY = (video.videoHeight - cropSize) / 2
 
-      // Draw mirrored frame
-      ctx.save()
-      ctx.scale(-1, 1)
-      ctx.drawImage(videoRef.current, -canvas.width, 0, canvas.width, canvas.height)
-      ctx.restore()
+      // Set canvas size to crop size
+      canvas.width = cropSize
+      canvas.height = cropSize
 
-      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9)
+      // Draw cropped image
+      // Source: video, sx, sy, sWidth, sHeight (source crop)
+      // Destination: x, y, width, height (canvas)
+      ctx.drawImage(video, startX, startY, cropSize, cropSize, 0, 0, cropSize, cropSize)
+
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.95)
     })
   }
 
   // Register user
   const registerUser = async () => {
-    if (!userName.trim()) {
-      setRegisterStatus({ type: 'error', message: '⚠️ Please enter a name first!' })
+    if (!userName.trim() || !userId.trim()) {
+      setRegisterStatus({ type: 'error', message: '⚠️ Enter Name and User ID!' })
       return
     }
 
     if (!isCameraOn) {
-      setRegisterStatus({ type: 'error', message: '⚠️ Please start the camera first!' })
+      setRegisterStatus({ type: 'error', message: '⚠️ Start camera first!' })
       return
     }
 
@@ -128,34 +135,34 @@ function App() {
       return
     }
 
-    setRegisterStatus({ type: 'info', message: '📸 Capturing face...' })
+    setRegisterStatus({ type: 'info', message: '📸 Processing...' })
 
     try {
       const frameBlob = await captureFrame()
       if (!frameBlob) throw new Error('Failed to capture frame')
 
-      setRegisterStatus({ type: 'info', message: '📤 Sending to server...' })
-
       const formData = new FormData()
-      formData.append('name', userName)
-      formData.append('file', frameBlob, `${userName}.jpg`)
+      formData.append('user_id', userId)
+      formData.append('username', userName)
+      formData.append('file', frameBlob, `face_${userId}.jpg`)
 
       const response = await fetch(`${API_BASE_URL}/register`, {
         method: 'POST',
         body: formData
       })
-
+      
       const result = await response.json()
 
-      if (result.status === 'success') {
-        setRegisterStatus({ type: 'success', message: `✅ ${result.message}` })
+      if (result.success) {
+        setRegisterStatus({ type: 'success', message: `✅ Registered!` })
         setUserName('')
+        setUserId('')
         setTimeout(() => setRegisterStatus({ type: '', message: '' }), 5000)
       } else {
-        setRegisterStatus({ type: 'error', message: `❌ ${result.message}` })
+        setRegisterStatus({ type: 'error', message: `❌ ${result.error || 'Failed'}` })
       }
     } catch (error) {
-      setRegisterStatus({ type: 'error', message: `❌ Error: ${error.message}` })
+      setRegisterStatus({ type: 'error', message: '❌ Connection Error' })
     }
   }
 
@@ -168,7 +175,7 @@ function App() {
       if (!frameBlob) return
 
       const formData = new FormData()
-      formData.append('file', frameBlob, 'frame.jpg')
+      formData.append('file', frameBlob, 'query.jpg')
 
       const response = await fetch(`${API_BASE_URL}/recognize`, {
         method: 'POST',
@@ -177,26 +184,20 @@ function App() {
 
       const data = await response.json()
 
-      if (data.status === 'success') {
-        setResult({ name: data.detected_name, confidence: data.confidence_score })
+      if (data.found) {
+        setResult({ name: data.username, confidence: data.confidence })
       } else {
-        setResult({ name: 'Error', confidence: 0 })
+        setResult({ name: 'Unknown', confidence: 0 })
       }
     } catch (error) {
-      setResult({ name: 'Connection Error', confidence: 0 })
+      setResult({ name: 'Error', confidence: 0 })
     }
   }, [isCameraOn])
 
   // Start recognition
   const startRecognition = async () => {
     if (!isCameraOn) {
-      setRegisterStatus({ type: 'error', message: '⚠️ Please start the camera first!' })
-      return
-    }
-
-    const backendOk = await checkBackendStatus()
-    if (!backendOk) {
-      setRegisterStatus({ type: 'error', message: '❌ Backend not running!' })
+      setRegisterStatus({ type: 'error', message: '⚠️ Start camera first!' })
       return
     }
 
@@ -235,7 +236,7 @@ function App() {
     }
   }, [])
 
-  const isUnknown = result.name === 'Unknown' || result.name === 'Error' || result.name === 'Connection Error' || result.confidence < 50
+  const isUnknown = result.name === 'Unknown' || result.name === 'Error' || result.confidence < 50
 
   return (
     <div className="app-container">
@@ -247,7 +248,7 @@ function App() {
         </div>
         <p className="tagline">Smart Face Recognition System</p>
         <div className={`backend-status ${backendStatus.connected ? 'success' : 'error'}`}>
-          {backendStatus.connected ? '🟢 Backend Connected' : '🔴 Backend Offline'}
+          {backendStatus.connected ? '🟢 API Online' : '🔴 API Offline'}
         </div>
       </header>
 
@@ -256,14 +257,29 @@ function App() {
         {/* Video Section */}
         <section className="video-section">
           <div className="video-container">
-            <video ref={videoRef} autoPlay playsInline muted />
+            <video 
+              ref={videoRef} 
+              autoPlay 
+              playsInline 
+              muted 
+              style={{ transform: 'scaleX(-1)' }} // Mirror locally only
+            />
             <canvas ref={canvasRef} style={{ display: 'none' }} />
-            {!isCameraOn && (
-              <div className="video-overlay">
-                <span className="overlay-text">📷 Click "Start Camera" to begin</span>
+            
+            {/* Face Guide Box Overlay */}
+            {isCameraOn && (
+              <div className="face-guide-overlay">
+                <div className="face-guide-box">
+                  <span>Place Face Here</span>
+                </div>
               </div>
             )}
-            <div className={`face-indicator ${isRecognizing ? 'active' : ''}`} />
+
+            {!isCameraOn && (
+              <div className="video-overlay">
+                <span className="overlay-text">📷 Start Camera</span>
+              </div>
+            )}
           </div>
           <button
             className={`btn btn-camera ${isCameraOn ? 'active' : ''}`}
@@ -280,18 +296,25 @@ function App() {
           <div className="panel register-panel">
             <div className="panel-header">
               <span className="panel-icon">✏️</span>
-              <h2>Register New User</h2>
+              <h2>Register</h2>
             </div>
             <div className="panel-content">
               <div className="input-group">
-                <label htmlFor="userName">Enter Name</label>
+                <label>User ID</label>
                 <input
                   type="text"
-                  id="userName"
-                  placeholder="e.g., John Doe"
+                  placeholder="e.g. 101"
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
+                />
+              </div>
+              <div className="input-group">
+                <label>Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Anubhav"
                   value={userName}
                   onChange={(e) => setUserName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && registerUser()}
                 />
               </div>
               <button
@@ -314,7 +337,7 @@ function App() {
           <div className="panel recognize-panel">
             <div className="panel-header">
               <span className="panel-icon">🔍</span>
-              <h2>Live Recognition</h2>
+              <h2>Detect</h2>
             </div>
             <div className="panel-content">
               <button
@@ -323,12 +346,11 @@ function App() {
                 disabled={!isCameraOn}
               >
                 <span className="btn-icon">{isRecognizing ? '⏸️' : '▶️'}</span>
-                {isRecognizing ? 'Stop Recognition' : 'Start Recognition'}
+                {isRecognizing ? 'Stop' : 'Start'}
               </button>
               <div className="recognition-status">
-                <span className="status-label">Status:</span>
                 <span className={`status-value ${isRecognizing ? 'running' : ''}`}>
-                  {isRecognizing ? 'Running...' : 'Idle'}
+                  {isRecognizing ? 'Scannning...' : 'Idle'}
                 </span>
               </div>
             </div>
@@ -338,7 +360,7 @@ function App() {
           <div className="panel results-panel">
             <div className="panel-header">
               <span className="panel-icon">📋</span>
-              <h2>Recognition Result</h2>
+              <h2>Result</h2>
             </div>
             <div className="result-content">
               <div
@@ -355,22 +377,11 @@ function App() {
                 <div className={`result-name ${isUnknown ? 'unknown' : 'recognized'}`}>
                   {result.name}
                 </div>
-                <div className="confidence-bar">
-                  <div
-                    className="confidence-fill"
-                    style={{
-                      width: `${result.confidence}%`,
-                      background: result.confidence >= 70
-                        ? 'linear-gradient(90deg, #10b981 0%, #059669 100%)'
-                        : result.confidence >= 50
-                          ? 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)'
-                          : 'linear-gradient(90deg, #ef4444 0%, #b91c1c 100%)'
-                    }}
-                  />
-                </div>
-                <div className="confidence-text">
-                  Confidence: <span>{result.confidence}%</span>
-                </div>
+                {!isUnknown && (
+                  <div className="confidence-text">
+                    Confidence: <span>{result.confidence.toFixed(1)}%</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -379,7 +390,7 @@ function App() {
 
       {/* Footer */}
       <footer className="footer">
-        <p>Powered by DeepFace & ArcFace | Medoc © 2024</p>
+        <p>Face Auth System</p>
       </footer>
     </div>
   )
