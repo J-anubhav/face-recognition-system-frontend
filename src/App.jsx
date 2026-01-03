@@ -9,9 +9,9 @@ function App() {
   const [isRecognizing, setIsRecognizing] = useState(false)
   const [backendStatus, setBackendStatus] = useState({ connected: false, message: 'Checking...' })
   const [registerStatus, setRegisterStatus] = useState({ type: '', message: '' })
-  const [userName, setUserName] = useState('')
-  const [userId, setUserId] = useState('')
-  const [result, setResult] = useState({ name: 'No face detected', confidence: 0 })
+  const [hospitalId, setHospitalId] = useState('')
+  const [employeeId, setEmployeeId] = useState('')
+  const [result, setResult] = useState({ hospitalId: 'Unknown', employeeId: 'Unknown', confidence: 0 })
 
   // Refs
   const videoRef = useRef(null)
@@ -98,7 +98,7 @@ function App() {
       const video = videoRef.current
       const canvas = canvasRef.current
       const ctx = canvas.getContext('2d')
-      
+
       // Define crop dimensions (square crop from center)
       const cropSize = 300 // Size of the face box
       const startX = (video.videoWidth - cropSize) / 2
@@ -119,8 +119,8 @@ function App() {
 
   // Register user
   const registerUser = async () => {
-    if (!userName.trim() || !userId.trim()) {
-      setRegisterStatus({ type: 'error', message: '⚠️ Enter Name and User ID!' })
+    if (!hospitalId.trim() || !employeeId.trim()) {
+      setRegisterStatus({ type: 'error', message: '⚠️ Enter Hospital ID and Employee ID!' })
       return
     }
 
@@ -142,21 +142,21 @@ function App() {
       if (!frameBlob) throw new Error('Failed to capture frame')
 
       const formData = new FormData()
-      formData.append('user_id', userId)
-      formData.append('username', userName)
-      formData.append('file', frameBlob, `face_${userId}.jpg`)
+      formData.append('hospitalId', hospitalId)
+      formData.append('employeeId', employeeId)
+      formData.append('file', frameBlob, `face_${employeeId}.jpg`)
 
       const response = await fetch(`${API_BASE_URL}/register`, {
         method: 'POST',
         body: formData
       })
-      
+
       const result = await response.json()
 
       if (result.success) {
         setRegisterStatus({ type: 'success', message: `✅ Registered!` })
-        setUserName('')
-        setUserId('')
+        setHospitalId('')
+        setEmployeeId('')
         setTimeout(() => setRegisterStatus({ type: '', message: '' }), 5000)
       } else {
         setRegisterStatus({ type: 'error', message: `❌ ${result.error || 'Failed'}` })
@@ -185,12 +185,16 @@ function App() {
       const data = await response.json()
 
       if (data.found) {
-        setResult({ name: data.username, confidence: data.confidence })
+        setResult({ 
+          hospitalId: data.hospitalId, 
+          employeeId: data.employeeId, 
+          confidence: data.confidence 
+        })
       } else {
-        setResult({ name: 'Unknown', confidence: 0 })
+        setResult({ hospitalId: 'Unknown', employeeId: 'Unknown', confidence: 0 })
       }
     } catch (error) {
-      setResult({ name: 'Error', confidence: 0 })
+      setResult({ hospitalId: 'Error', employeeId: 'Error', confidence: 0 })
     }
   }, [isCameraOn])
 
@@ -236,7 +240,7 @@ function App() {
     }
   }, [])
 
-  const isUnknown = result.name === 'Unknown' || result.name === 'Error' || result.confidence < 50
+  const isUnknown = result.hospitalId === 'Unknown' || result.hospitalId === 'Error' || result.confidence < 50
 
   return (
     <div className="app-container">
@@ -257,15 +261,15 @@ function App() {
         {/* Video Section */}
         <section className="video-section">
           <div className="video-container">
-            <video 
-              ref={videoRef} 
-              autoPlay 
-              playsInline 
-              muted 
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
               style={{ transform: 'scaleX(-1)' }} // Mirror locally only
             />
             <canvas ref={canvasRef} style={{ display: 'none' }} />
-            
+
             {/* Face Guide Box Overlay */}
             {isCameraOn && (
               <div className="face-guide-overlay">
@@ -300,21 +304,21 @@ function App() {
             </div>
             <div className="panel-content">
               <div className="input-group">
-                <label>User ID</label>
+                <label>Hospital ID</label>
                 <input
                   type="text"
-                  placeholder="e.g. 101"
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
+                  placeholder="e.g. H123"
+                  value={hospitalId}
+                  onChange={(e) => setHospitalId(e.target.value)}
                 />
               </div>
               <div className="input-group">
-                <label>Name</label>
+                <label>Employee ID</label>
                 <input
                   type="text"
-                  placeholder="e.g. Anubhav"
-                  value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
+                  placeholder="e.g. E456"
+                  value={employeeId}
+                  onChange={(e) => setEmployeeId(e.target.value)}
                 />
               </div>
               <button
@@ -371,11 +375,11 @@ function App() {
                     : 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
                 }}
               >
-                {isUnknown ? '?' : result.name.charAt(0).toUpperCase()}
+                {isUnknown ? '?' : result.employeeId.charAt(0).toUpperCase()}
               </div>
               <div className="result-details">
                 <div className={`result-name ${isUnknown ? 'unknown' : 'recognized'}`}>
-                  {result.name}
+                  {isUnknown ? 'Unknown' : `${result.hospitalId} / ${result.employeeId}`}
                 </div>
                 {!isUnknown && (
                   <div className="confidence-text">
